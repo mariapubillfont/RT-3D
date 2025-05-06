@@ -1,0 +1,26 @@
+D: 0.2
+freq: 25e9
+typeSrc: iso
+Lx: 0
+Ly: 0
+Nx: 1
+Ny: 1
+Nrays: 50
+Ntheta: 1
+Nphi: 6
+rangeTheta: 0 180
+rangePhi: 0 360
+meshMaxSize: 0.1
+typeSurface: cylinder
+R1: 150e-3 
+h1: 60e-3 
+center1: 0e-3 0e-3 70e-3
+axis1: 0 0 1
+er: 1 4    
+tand: 0 0
+Nrefl: 3
+saveExcels: 0
+plotSurf: 0
+plotDRT: 1
+plotNormals: 0
+plotTubes: 0
