@@ -1,0 +1,5 @@
+__pycache__/
+.vscode/
+auxxx
+Gmsh_examples.cpython-313.pyc
+intput1.txt
