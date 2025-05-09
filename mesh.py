@@ -68,6 +68,7 @@ def create_surfaces():
             case 'cylinder':
                 surf = create_full_cylinder(bodies.r, bodies.h, bodies.center, bodies.ax)
 
+
             case 'box':
                 surf = create_full_box(bodies.center, bodies.ax)
 
@@ -79,6 +80,12 @@ def create_surfaces():
         else: isLastSurf = False
         surf = rt.Surface(surf, er[ii], er[ii+1],  tand[ii], tand[ii+1], False, False, False, True)
         surfaces.append(surf)
+        # surf = create_full_cylinder_up(bodies.r, bodies.h, bodies.center, bodies.ax)
+        # surf = rt.Surface(surf, er[ii], er[ii+1],  tand[ii], tand[ii+1], False, False, False, True)
+        # surf = create_full_cylinder_wall(bodies.r, bodies.h, bodies.center, bodies.ax)
+        # surf = rt.Surface(surf, er[ii], er[ii+1],  tand[ii], tand[ii+1], False, False, False, True)
+        # surfaces.append(surf)
+
     
     surf = create_full_sphere()
     surf = rt.Surface(surf, 1, 1,  1, 1, False, False, True, True)
@@ -115,7 +122,7 @@ def curve_function(t, type_surf, MLthick, surf_params):
 
 
 #===========================================================================================================
-def create_full_cylinder2(radius, height, center, axis):
+def create_full_cylinder_up(radius, height, center, axis):
     gmsh.initialize()
     model = gmsh.model
     occ   = model.occ
@@ -162,6 +169,52 @@ def create_full_cylinder2(radius, height, center, axis):
 #===========================================================================================================
 
 
+#===========================================================================================================
+def create_full_cylinder_wall(radius, height, center, axis):
+    gmsh.initialize()
+    model = gmsh.model
+    occ   = model.occ
+    mesh  = model.mesh
+    cx, cy, cz = center
+    ax, ay, az = axis
+
+    
+    x_values = np.ones(I.num_points)*radius
+    y_values = np.zeros(I.num_points)
+    z_values = np.linspace(0, height, I.num_points)      # fer-ho de forma matricial per eliminar les columnes amb valors NaN!!!!!!!!
+
+    point_ids = np.zeros_like(x_values)
+    for i in range(len(point_ids)):
+        point_id = occ.addPoint(x_values[i], y_values[i], z_values[i], meshSize=0.1)
+        point_ids[i] = point_id
+
+    l1 = occ.addSpline(point_ids)
+    occ.synchronize()   
+
+    surf1 = occ.revolve([(1, l1)], 0, 0, 0, 0, 0, 1, 2*np.pi)
+    occ.synchronize()
+
+    # occ.addCylinder(cx, cy, cz, ax*height, ay*height, az*height, radius)
+    # occ.synchronize()
+    gmsh.option.setNumber('Mesh.MeshSizeMin', 0.001)
+    gmsh.option.setNumber('Mesh.MeshSizeMax', I.meshMaxSize)   
+    mesh.generate(2)
+
+    nodeTags, nodeCoords, _ = model.mesh.getNodes()                         # get the nodes
+    elementType = gmsh.model.mesh.getElementType("triangle", 1)
+    faceNodes = gmsh.model.mesh.getElementFaceNodes(elementType, 3)         # get the faces
+    nodes = nodeCoords.reshape(-1, 3)                                       # reshape vector size to [nNodes, 3]
+    faces = np.reshape(faceNodes, (-1, 3))                                  # reshape vector size to [nFaces, 3]
+    occ.synchronize()
+    gmsh.finalize()
+
+    ind0 = int(np.min(faces))-1                                             # shift from 1- to 0-based indexing
+    V = nodes[ind0:,:]                                                      # discarting nodes with index < ind0
+    F = faces-(ind0+1)                                                      # Adjusts all the indices in faces by subtracting (ind0 + 1), from 1- to 0-based indexing.                    
+    faces1 = np.hstack((3*np.ones((F.shape[0],1)),F)).astype(int)           # for pyvista each triangular cell is: [3, i0, i1, i2]    
+    surf = pv.PolyData(V,faces=faces1) #,n_faces=faces1.shape[0]
+    return surf
+#===========================================================================================================
 
 
 

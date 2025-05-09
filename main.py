@@ -53,7 +53,7 @@ sk0 = rt.fibonacci_sphere(N_rays)
 Pk, idx_intersected_faces, path_length, nk, sk,  = rt.DRT(origins, Nx, Ny, sk0, surfaces )
 
 
-plots.plotDRT(surfaces, Pk, N_sections, sk)
+plots.plotDRT(surfaces, Pk, sk)
 # ray_length = 0.5  # longitud de los rayos
 
 # origin = np.array([0, 0, 0])

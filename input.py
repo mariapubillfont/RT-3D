@@ -63,6 +63,7 @@ plotSurf = variables['plotSurf']
 plotDRT = variables['plotDRT']
 plotNormals = variables['plotNormals']
 plotTubes = variables['plotTubes']
+maxRefl = 3
 
 m_max = 10000000                                        #max slope possible
 e0 = 8.8541878128e-12                                   #vacuum permitivitty

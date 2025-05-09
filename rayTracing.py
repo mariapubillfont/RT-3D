@@ -80,14 +80,13 @@ def snell(i, n, ni, nt):
 
 #===========================================================================================================
 def distance(A,B):
-    dist = np.sqrt(abs(A[:,0]-B[:,0])**2+abs(A[:,1]-B[:,1])**2+abs(A[:,2]-B[:,2])**2)
+    dist = np.sqrt(abs(A[:][0]-B[:][0])**2+abs(A[:][1]-B[:][1])**2+abs(A[:][2]-B[:][2])**2)
     return dist
 #==========================================================================================================
 
-#===========================================================================================================
-def ray(surfaces, direction, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx):
+
+
     # surfaces --> meshed dome surfaces
-    # direction --> DRT / RRT
     # ray_origin --> start point of the ray
     # sk --> vector defining the ray direction
     # Pk --> points where the rays intersect with the surfaces
@@ -96,124 +95,108 @@ def ray(surfaces, direction, sk, Pk, nk, ray_lengths, intersected_faces, next_su
     # i --> vector of the incident ray to each surface
     # intersected_faces --> list of indexes of each intersected face by a ray
     # next_surf --> next surface to be intersected
-
+#===========================================================================================================
+def ray(surfaces, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx):
     lastSurf = surfaces[next_surf].isLastSurface
     isArray = surfaces[next_surf].isArray
     isFirstIx = surfaces[next_surf].isFirstIx
     # Find intersections & intersected faces' idx
     current_surf = surfaces[next_surf].surface
-    points, ray_idx, faces = current_surf.multi_ray_trace(Pk[idx,:,:], sk[idx,:,:], first_point=True, retry=True)
-    idx += 1
 
-
-    filt_idx = []
-
-    # find only the closest intersection to the source
-    ray_origin = np.array([0.0, 0.0, 0.0])
-    distances = np.linalg.norm(points - ray_origin, axis=1)
-    closest_points = {}
-    for i, ray_index in enumerate(ray_idx):
-        d = distances[i]
-        if ray_index not in closest_points or d < closest_points[ray_index][0]:
-            filt_idx.append(i)
-            # filtered_points.append(points[i])
-            # filtered_indices.append(ray_idx)
-            # filtered_faces.append(faces[i])
-            closest_points[ray_index] = (d, points[i], faces[i])
-
-    # filtered_points = []
-    # filtered_indices = []
-    # filtered_faces = []
-    filtered_points = np.zeros([len(filt_idx),3])
-    filtered_indices = np.zeros(len(filt_idx), dtype=int)
-    filtered_faces =  np.zeros(len(filt_idx), dtype=int)
-    for i in range(0, len(filt_idx)):
-        idxx = filt_idx[i]
-        filtered_points[i] = points[idxx]
-        filtered_indices[i] = int(ray_idx[idxx])
-        filtered_faces[i] = int(faces[idxx])
-
+    origins = np.array([ray[-1] for ray in Pk])
+    directions = np.array([d[-1] for d in sk])
+    points, ray_idx, faces = current_surf.multi_ray_trace(origins, directions, first_point=True, retry=True)
+    # normals = find_normals(points, intersected_faces, current_surf)
    
-    # for ray_idx, (d, pt, face) in closest_points.items():
-    #     filtered_points.append(pt)
-    #     filtered_indices.append(int(ray_idx))
-    #     filtered_faces.append(int(face))
-
-    Pk = Pk[:,filtered_indices,:]    
-    intersected_faces = intersected_faces[filtered_indices,:] # if we want to delete rays that don't intersect
-    ray_lengths = ray_lengths[filtered_indices,:]
-    nk = nk[:,filtered_indices,:]
-    sk = sk[:,filtered_indices,:]
-
-    # 
-    Pk[idx,:,:] = filtered_points
-    intersected_faces[:,idx-1] = filtered_faces
-    # Calculate length
-    ray_lengths[:,idx-1] = distance(Pk[idx-1,:,:], filtered_points)
-    # Find normals
-    normals = find_normals(filtered_points, filtered_faces, current_surf)
+    idx += 1
+     # Snell
+    n1 = np.sqrt(abs(surfaces[next_surf].er1))  # n_ext
+    n2 = np.sqrt(abs(surfaces[next_surf].er2))  # n_int
+    # t = snell(sk[idx-1],normals,n1,n2)
+    normals = find_normals(points, faces, current_surf)
     if isFirstIx: normals = -normals
-    nk[idx,:,:] = normals #if not isFirstIx else -normals
-    # Snell
-    if direction == 'DRT':
-        n1 = np.sqrt(abs(surfaces[next_surf].er1))  # n_ext
-        n2 = np.sqrt(abs(surfaces[next_surf].er2))  # n_int
-    else:
-        n2 = np.sqrt(abs(surfaces[next_surf].er1))
-        n1 = np.sqrt(abs(surfaces[next_surf].er2))
 
-    if direction == 'DRT':
-        t = snell(sk[idx-1],normals,n1,n2)
-    else:
-        t = snell(sk[idx-1],-normals,n1,n2)
-
-    idx_citicalangles = ~np.isnan(np.sum(t, axis=1))
-    # Delete rays where critical angles is exceeded
-    Pk = Pk[:,idx_citicalangles,:]
-    intersected_faces = intersected_faces[idx_citicalangles,:]
-    ray_lengths = ray_lengths[idx_citicalangles,:]
-    nk = nk[:,idx_citicalangles,:]
-    sk[idx,:,:] = t
-    sk = sk[:,idx_citicalangles,:]
-    # phi_a = phi_a[idx_citicalangles]
-    # e_arr = e_arr[idx_citicalangles,:]
+    for pt, i_ray, i_face, i_nk in zip(points, ray_idx, faces, normals):
+        Pk[i_ray].append(pt.tolist())
+        intersected_faces[i_ray].append(i_face)
+        ray_lengths[i_ray].append(distance(Pk[i_ray][idx-1], pt)) 
+        nk[i_ray].append(i_nk)
+        t = snell(sk[i_ray][-1],nk[i_ray][-2],n1,n2)
+        sk[i_ray].append(t)
+        
+        # nk[i_ray].append(i_nk)
+    # Pk[idx,:,:] = filtered_points #WE SHOULD APPEND THE PK AND THE OTHERS, WE DONT KNOW HOW MANY INTERFACES
+    # intersected_faces[:,idx-1] = filtered_faces
+    # Calculate length
+    # ray_lengths[:,idx-1] = distance(Pk[idx-1,:,:], filtered_points)
+    # Find normals
+    # normals = find_normals(filtered_points, filtered_faces, current_surf)
+    # if isFirstIx: normals = -normals
     
-    # Next surface
-    if direction == 'DRT':
-        next_surf+=1
-    else:
-        next_surf-=1
+    # # Snell
+    # n1 = np.sqrt(abs(surfaces[next_surf].er1))  # n_ext
+    # n2 = np.sqrt(abs(surfaces[next_surf].er2))  # n_int
+    # # t = snell(sk[idx-1],normals,n1,n2)
+    # normals = find_normals(points, faces, current_surf)
+    # # if isFirstIx: normals = -normals
+    # for i_ray, i_nk in zip(ray_idx,normals):
+    #     nk[i_ray].append(i_nk)
+    #     t = snell(sk[i_ray][-1],nk[i_ray][-2],n1,n2)
+    #     sk[i_ray].append(t)
+        
+
+
+  
+
+    # idx_citicalangles = ~np.isnan(np.sum(t, axis=1))
+    # # Delete rays where critical angles is exceeded
+    # Pk = Pk[:,idx_citicalangles,:]
+    # intersected_faces = intersected_faces[idx_citicalangles,:]
+    # ray_lengths = ray_lengths[idx_citicalangles,:]
+    # nk = nk[:,idx_citicalangles,:]
+    # sk[idx,:,:] = t
+    # sk = sk[:,idx_citicalangles,:]
+    # # phi_a = phi_a[idx_citicalangles]
+    # # e_arr = e_arr[idx_citicalangles,:]
+    
+    surfaces[next_surf].isFirstIx = False
+    # if idx >+ I.maxRefl: next_surf += 1
+    next_surf += 1
+
     
     # string = ", ".join([f"({point[0]:.3f}, {point[1]:.3f}, {point[2]:.3f})" for point in points])  
     # print('***** Rays intersected at ',  string)  
-    if (lastSurf and direction=='DRT') or (isArray and direction=='RRT'):
+    if lastSurf:
         return Pk, sk, nk, ray_lengths, intersected_faces
     else:
-        return ray(surfaces, direction, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx)
+        return ray(surfaces, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx)
 #===========================================================================================================
 
 
 #===========================================================================================================
 def DRT (ray_origins, Nx, Ny, sk_0, surfaces):
-
     N_sections = I.nSurfaces
     N_rays = I.Nrays
-    sk = np.zeros([N_sections+1, N_rays, 3])
-    sk[0,:,:] = sk_0
-    
-    direction = 'DRT'
 
-    Pk = np.zeros([N_sections+1, N_rays, 3])
-    Pk[0,:,:] = ray_origins
-    nk = np.zeros([N_sections+1, N_rays, 3])
-    nk[0,:,:] = np.tile(np.array([0,0,1]), (N_rays,1))
-    ray_lengths = np.zeros([N_rays, N_sections])
-    intersected_faces = np.zeros([N_rays, N_sections])
+    Pk = [[[0.0, 0.0, 0.0]] for _ in range(N_rays)]                            #List of N_rays elements, 1 element per each ray
+    sk = [[] for _ in range(N_rays)] 
+    for i in range(N_rays):
+        sk[i].append(sk_0[i])
+    nk = [[[0.0, 0.0, 1.0]] for _ in range(N_rays)] 
+    ray_lengths = [[] for _ in range(N_rays)] 
+    intersected_faces = [[] for _ in range(N_rays)] 
+    
+    # Pk = np.zeros([N_sections+1, N_rays, 3])
+    # Pk[0,:,:] = ray_origins
+    # nk = np.zeros([N_sections+1, N_rays, 3])
+    # nk[0,:,:] = np.tile(np.array([0,0,1]), (N_rays,1))
+    # ray_lengths = np.zeros([N_rays, N_sections])
+    # intersected_faces = np.zeros([N_rays, N_sections])
     next_surf = 1
     idx = 0
 
-    Pk, sk, nk, ray_lengths, idx_intersected_faces = ray(surfaces, direction, sk, Pk, nk, ray_lengths,  intersected_faces, next_surf, idx)
-    N_used_rays = np.shape(Pk)[1]
+    Pk, sk, nk, ray_lengths, idx_intersected_faces = ray(surfaces, sk, Pk, nk, ray_lengths,  intersected_faces, next_surf, idx)
+    # N_used_rays = np.shape(Pk)[1]
 
     # Path length calculation
     # path_length = np.zeros((N_used_rays,1), dtype=np.complex128) + (phi_a/I.k0).reshape(-1,1)
@@ -248,7 +231,60 @@ def barycentric_mean(points, faces_intersected, faces_areas, faces_nodes, surfac
     Returns:
     - (N, 3) array of interpolated normal vectors at each point
     """
-    # Reformat faces_nodes if needed
+    # Reshape faces_nodes from PyVista format: (F*4,) → (F, 3)
+    n_faces = len(faces_areas)
+    faces = faces_nodes.reshape((n_faces, 4))[:, 1:]  # Drop the leading '3' in each face
+
+    interpolated_normals = np.zeros_like(points)
+
+    for i, (point, face_idx) in enumerate(zip(points, faces_intersected)):
+        # Get node indices for the triangle
+        i0, i1, i2 = faces[face_idx]
+
+        # Get vertex positions
+        A = surface_nodes[i0]
+        B = surface_nodes[i1]
+        C = surface_nodes[i2]
+
+        # Get normals at each vertex
+        nA = normals_nodes[i0]
+        nB = normals_nodes[i1]
+        nC = normals_nodes[i2]
+
+        # Compute vectors for barycentric coordinates
+        v0 = B - A
+        v1 = C - A
+        v2 = point - A
+
+        d00 = np.dot(v0, v0)
+        d01 = np.dot(v0, v1)
+        d11 = np.dot(v1, v1)
+        d20 = np.dot(v2, v0)
+        d21 = np.dot(v2, v1)
+
+        denom = d00 * d11 - d01 * d01
+        if np.abs(denom) < 1e-12:
+            # Degenerate triangle — fallback to vertex normal
+            interpolated_normals[i] = nA
+            continue
+
+        # Barycentric coordinates
+        v = (d11 * d20 - d01 * d21) / denom
+        w = (d00 * d21 - d01 * d20) / denom
+        u = 1.0 - v - w
+
+        # Interpolated normal
+        normal = u * nA + v * nB + w * nC
+
+        # Normalize
+        norm = np.linalg.norm(normal)
+        if norm > 1e-12:
+            normal /= norm
+
+        interpolated_normals[i] = normal
+
+    return interpolated_normals
+    """# Reformat faces_nodes if needed
     if faces_nodes.ndim == 1:
         faces_nodes = faces_nodes.reshape(-1, 4)[:, 1:]
 
@@ -263,6 +299,10 @@ def barycentric_mean(points, faces_intersected, faces_areas, faces_nodes, surfac
         B = surface_nodes[i1]
         C = surface_nodes[i2]
 
+        tri_normal = np.cross(B - A, C - A)
+        area = np.linalg.norm(tri_normal) * 0.5
+        if area < 1e-12:
+            print(f"Triángulo degenerado en cara {face_idx}, vértices: {i0}, {i1}, {i2}")
         # Get normals at each vertex
         nA = normals_nodes[i0]
         nB = normals_nodes[i1]
@@ -298,8 +338,9 @@ def barycentric_mean(points, faces_intersected, faces_areas, faces_nodes, surfac
             normal /= norm
 
         interpolated_normals.append(normal)
-
-    return np.array(interpolated_normals)
+        import pyvista as pv
+   
+    return np.array(interpolated_normals)"""
 #===========================================================================================================
 
 
