@@ -16,18 +16,25 @@ def plotSurfaces(surfaces):
 
 
 
-def plotDRT(surfaces, Pk, sk, N_used_rays=None, show_dirs=False, dir_scale=0.1, show_all = False):
+def plotDRT(surfaces, Pk, sk, show_ray_ids=True, show_dirs=False, dir_scale=0.04, show_all = False):
     plotter = pv.Plotter()
     cmap = get_cmap("viridis")
     
     # Plot surfaces
     for i in range(len(surfaces)-1):
+        if i == 0:
+            color = 'lightgray'
+        else:
+            color = 'lightblue'
         surf = surfaces[i]
         mesh = surf.surface
-        plotter.add_mesh(mesh, color='lightgray', opacity=0.5, show_edges=True)
-
-
-    for ray_points in Pk:
+        plotter.add_mesh(mesh, color=color, opacity=0.5, show_edges=False)
+    
+    ray_origins = []
+    ray_labels = []
+    for ray_id, rp in enumerate(Pk):
+        # ray_points = rp[:-1]
+        ray_points = rp
         n_points = len(ray_points)
         if n_points > 1:
             ray_path = np.array(ray_points)
@@ -37,22 +44,27 @@ def plotDRT(surfaces, Pk, sk, N_used_rays=None, show_dirs=False, dir_scale=0.1, 
                 if not show_all: continue 
             else:
                 ray_color = 'black'
-                point_color = 'mediumblue'
+                point_color = 'lightblue'
             for i in range(n_points - 1):
                 segment = np.array([ray_path[i], ray_path[i+1]])
                 plotter.add_lines(segment, color=ray_color, width=2)
-            for pt in ray_path:
-                plotter.add_mesh(pv.Sphere(radius=0.002, center=pt), color=point_color)
+            # for pt in ray_path:
+            #     plotter.add_mesh(pv.Sphere(radius=0.0001, center=pt), color=point_color)
             
             if show_dirs:
-                tail = ray_path[-1]
-                if len(sk[i]) >= len(ray_path):
-                    direction = np.array(sk[i][len(ray_path) - 1])
-                else:
-                    direction = np.array(sk[i][-1])  # fallback
+                for pt, dir_vec in zip(ray_path, sk[Pk.index(ray_points)]):  # synchronize points and directions
+                    dir_vec = np.array(dir_vec)
+                    if np.linalg.norm(dir_vec) > 0:
+                        arrow = pv.Arrow(start=pt, direction=dir_vec, scale=dir_scale)
+                        plotter.add_mesh(arrow, color='black')
 
-                arrow = pv.Arrow(start=tail, direction=direction, scale=dir_scale)
-                plotter.add_mesh(arrow, color='black')
+            if show_ray_ids:
+                ray_origins.append(ray_path[1])
+                ray_labels.append(str(ray_id))
+
+    if show_ray_ids and ray_origins:
+        ray_origins = np.array(ray_origins)
+        plotter.add_point_labels(ray_origins, ray_labels, point_size=0, font_size=10, text_color="black")   
 
     plotter.add_title("Direct RT", font_size=14)
     plotter.show()
@@ -84,7 +96,7 @@ def plot_normals(surface, points, interp_vals, surface_nodes, normals_nodes):
     plotter.add_mesh(surface, color='lightgray', opacity=0.5, show_edges=True)
 
     # # 2. Plot normals at the surface nodes (in red)
-    if 1:
+    if 0:
         surface_pc = pv.PolyData(surface_nodes)
         surface_pc['normals'] = normals_nodes
         arrows_nodes = surface_pc.glyph(orient='normals', scale=True, factor=0.05)

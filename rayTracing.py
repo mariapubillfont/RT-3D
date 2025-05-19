@@ -1,22 +1,24 @@
 import input as I
 import plots
 import numpy as np
+import reflections as refl
 import pyvista as pv
 import gmsh
+
 from scipy.interpolate import LinearNDInterpolator
 
 
 ################################## CLASS DEFINITIONS #######################################################
 
 class Surface:
-    def __init__(self, surface, er1, er2, tand1, tand2, isArray, isAperturePlane, isLastSurface, isFirstIx):
+    def __init__(self, surface, er_out, er_in, tand_out, tand_in, isArray, isAperturePlane, isLastSurface, isFirstIx):
         self.surface = surface                          # pyvista PolyData
         self.faces = surface.faces                      # faces of the surface
         self.nodes = surface.points                     # nodes of the surface
-        self.er1 = er1                                  # permittivity "below" (closer to the array) the surface
-        self.er2 = er2                                  # permittivity "above" the surface
-        self.tand1 = tand1                              # loss tangent  inside the surface
-        self.tand2 = tand2                              # loss tangent outside the surface
+        self.er_in = er_in                                  # permittivity "below" (closer to the array) the surface
+        self.er_out = er_out                                  # permittivity "above" the surface
+        self.tand_in = tand_in                              # loss tangent  inside the surface
+        self.tand_out = tand_out                              # loss tangent outside the surface
         self.isArray = isArray                          # true if the surface is the array
         self.isAperturePlane = isAperturePlane          # true if the surface is the aperture plane
         self.isLastSurface = isLastSurface              # true if the surface is the last surface of the radome
@@ -46,6 +48,16 @@ def find_normals(points, faces_intersected, surface):
         faces_areas = surface.compute_cell_sizes(length=False, volume=False).cell_data['Area']
         faces_nodes = surface.faces
         interp_vals = barycentric_mean(points, faces_intersected, faces_areas, faces_nodes, surface_nodes, normals_nodes)
+    # CORRECCIÓN: Forzar normales en las tapas del cilindro
+    z_min = surface_nodes[:, 2].min()
+    z_max = surface_nodes[:, 2].max()
+    tol = 1e-5  # tolerancia para identificar si está en la tapa
+
+    for i, pt in enumerate(points):
+        if abs(pt[2] - z_min) < tol:
+            interp_vals[i] = np.array([0, 0, -1])
+        elif abs(pt[2] - z_max) < tol:
+            interp_vals[i] = np.array([0, 0, 1])
         
     # Debugging plot
     if I.plotNormals:
@@ -54,29 +66,33 @@ def find_normals(points, faces_intersected, surface):
     return interp_vals
 #===========================================================================================================
 
-
-
 #===========================================================================================================
-def snell(i, n, ni, nt):
-    # I call it snell but it's actually Heckbert's method
-    # i --> unit incident vector
-    # n --> unit normal vector to surface
-    # ni --> refractive index of the first media
-    # nt --> refractive index of the second media
-
-    alpha = ni/nt
-    t = np.zeros_like(i)
-    for ii in range(len(i)):
-        d = np.dot(i[ii],n[ii])
-        in_b = 1-((alpha**2)*(1-d**2))
+def snell(i, n, ninc, nt):
+## I call it snell but it's actually Heckbert's method
+## i --> unit incident vector
+## n --> unit normal vector to surface
+## ni --> refractive index of the first media
+## nt --> refractive index of the second media
+    i = np.array(i, dtype=float)
+    n = np.array(n, dtype=float)
+    alpha = ninc / nt
+    d = np.dot(i, n)
+    in_b = 1 - (alpha**2) * (1 - d**2)
+    if in_b < 0:
+        return np.full_like(i, np.nan)
+    else:
         b = np.sqrt(in_b)
-        if in_b<0:
-            t[ii] = np.nan
-        else:
-            t_tmp = alpha*i[ii] + (b-alpha*d)*n[ii]
-            t[ii] = t_tmp/np.linalg.norm(t_tmp) 
-    return t
+        t = alpha * i + (b - alpha * d) * n
+        return t / np.linalg.norm(t)
 #===========================================================================================================
+
+def reflect(i, n):
+    i = np.array(i, dtype=float)
+    n = np.array(n, dtype=float)
+
+    r = i - 2 * np.dot(i, n) * n
+    return r / np.linalg.norm(r)
+
 
 #===========================================================================================================
 def distance(A,B):
@@ -96,7 +112,7 @@ def distance(A,B):
     # intersected_faces --> list of indexes of each intersected face by a ray
     # next_surf --> next surface to be intersected
 #===========================================================================================================
-def ray(surfaces, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx):
+def ray(surfaces, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx, r_tes, tandels, n_diel):
     lastSurf = surfaces[next_surf].isLastSurface
     isArray = surfaces[next_surf].isArray
     isFirstIx = surfaces[next_surf].isFirstIx
@@ -105,132 +121,101 @@ def ray(surfaces, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx):
 
     origins = np.array([ray[-1] for ray in Pk])
     directions = np.array([d[-1] for d in sk])
-    points, ray_idx, faces = current_surf.multi_ray_trace(origins, directions, first_point=True, retry=True)
-    # normals = find_normals(points, intersected_faces, current_surf)
-   
+    points, ray_idx, faces = current_surf.multi_ray_trace(origins, directions, first_point=False, retry=True)
+    
+
+    # Solo comparar los rayos que realmente intersectaron algo
+    valid_origins = origins[ray_idx]
+    distances = np.linalg.norm(points - valid_origins, axis=1)
+
+    # # Filtrar los que tienen distancia mayor a un umbral (ej. 1e-3)
+    # threshold = 1e-3
+    # valid_mask = distances > threshold
+
+    # # Aplicar filtro a todos los arrays
+    # points = points[valid_mask]
+    # ray_idx = ray_idx[valid_mask]
+    # faces = faces[valid_mask]
+    
     idx += 1
      # Snell
-    n1 = np.sqrt(abs(surfaces[next_surf].er1))  # n_ext
-    n2 = np.sqrt(abs(surfaces[next_surf].er2))  # n_int
-    # t = snell(sk[idx-1],normals,n1,n2)
+    n_in = np.sqrt(abs(surfaces[next_surf].er_in))  # n_ext
+    n_out = np.sqrt(abs(surfaces[next_surf].er_out))  # n_int
     normals = find_normals(points, faces, current_surf)
     if isFirstIx: normals = -normals
 
     for pt, i_ray, i_face, i_nk in zip(points, ray_idx, faces, normals):
+
+        if i_ray == 36:
+            print('stop')
+            aux1, aux2 = current_surf.ray_trace([0,0,0], sk[i_ray][-1])
+                    # Pk[i_ray].append([pt[0], pt[1], round(pt[2], 2)])
         Pk[i_ray].append(pt.tolist())
         intersected_faces[i_ray].append(i_face)
         ray_lengths[i_ray].append(distance(Pk[i_ray][idx-1], pt)) 
         nk[i_ray].append(i_nk)
-        t = snell(sk[i_ray][-1],nk[i_ray][-2],n1,n2)
-        sk[i_ray].append(t)
+        i = sk[i_ray][-1]
+        n = nk[i_ray][-1]
+        t = snell(i, n, n_out, n_in)
+        r = reflect(i,n)
+
+        if isFirstIx:
+            sk[i_ray].append(t)
+            ri, ti = refl.fresnel_coefficients(i, n, n_out, n_in)
+            r_tes[i_ray].append(ti)
+            
+        else:
+            sk[i_ray].append(r)
+            sameDir = np.dot(n,i)
+            if sameDir > 0:                                     #n and i have the same direction
+                ri, ti = refl.fresnel_coefficients(i, n, n_in, n_out)
+            else:
+                ri, ti = refl.fresnel_coefficients(i, n, n_in, n_out)
+            r_tes[i_ray].append(ri)
         
-        # nk[i_ray].append(i_nk)
-    # Pk[idx,:,:] = filtered_points #WE SHOULD APPEND THE PK AND THE OTHERS, WE DONT KNOW HOW MANY INTERFACES
-    # intersected_faces[:,idx-1] = filtered_faces
-    # Calculate length
-    # ray_lengths[:,idx-1] = distance(Pk[idx-1,:,:], filtered_points)
-    # Find normals
-    # normals = find_normals(filtered_points, filtered_faces, current_surf)
-    # if isFirstIx: normals = -normals
-    
-    # # Snell
-    # n1 = np.sqrt(abs(surfaces[next_surf].er1))  # n_ext
-    # n2 = np.sqrt(abs(surfaces[next_surf].er2))  # n_int
-    # # t = snell(sk[idx-1],normals,n1,n2)
-    # normals = find_normals(points, faces, current_surf)
-    # # if isFirstIx: normals = -normals
-    # for i_ray, i_nk in zip(ray_idx,normals):
-    #     nk[i_ray].append(i_nk)
-    #     t = snell(sk[i_ray][-1],nk[i_ray][-2],n1,n2)
-    #     sk[i_ray].append(t)
+        tandels[i_ray].append(surfaces[next_surf].tand_in)
+        n_diel[i_ray].append(np.sqrt(surfaces[next_surf].er_in))    
         
-
-
-  
-
-    # idx_citicalangles = ~np.isnan(np.sum(t, axis=1))
-    # # Delete rays where critical angles is exceeded
-    # Pk = Pk[:,idx_citicalangles,:]
-    # intersected_faces = intersected_faces[idx_citicalangles,:]
-    # ray_lengths = ray_lengths[idx_citicalangles,:]
-    # nk = nk[:,idx_citicalangles,:]
-    # sk[idx,:,:] = t
-    # sk = sk[:,idx_citicalangles,:]
-    # # phi_a = phi_a[idx_citicalangles]
-    # # e_arr = e_arr[idx_citicalangles,:]
     
     surfaces[next_surf].isFirstIx = False
-    # if idx >+ I.maxRefl: next_surf += 1
-    next_surf += 1
-
-    
-    # string = ", ".join([f"({point[0]:.3f}, {point[1]:.3f}, {point[2]:.3f})" for point in points])  
-    # print('***** Rays intersected at ',  string)  
+    if idx >+ I.maxRefl: 
+        next_surf += 1
+        idx = 1
+    # next_surf += 1
     if lastSurf:
-        return Pk, sk, nk, ray_lengths, intersected_faces
+        return Pk, sk, nk, r_tes, tandels, n_diel, ray_lengths
     else:
-        return ray(surfaces, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx)
+        return ray(surfaces, sk, Pk, nk, ray_lengths, intersected_faces, next_surf, idx, r_tes, tandels, n_diel)
 #===========================================================================================================
 
 
 #===========================================================================================================
 def DRT (ray_origins, Nx, Ny, sk_0, surfaces):
-    N_sections = I.nSurfaces
     N_rays = I.Nrays
 
-    Pk = [[[0.0, 0.0, 0.0]] for _ in range(N_rays)]                            #List of N_rays elements, 1 element per each ray
+    Pk = [[ray_origins[i].tolist()] for i in range(N_rays)]                            #List of N_rays elements, 1 element per each ray
     sk = [[] for _ in range(N_rays)] 
     for i in range(N_rays):
         sk[i].append(sk_0[i])
     nk = [[[0.0, 0.0, 1.0]] for _ in range(N_rays)] 
     ray_lengths = [[] for _ in range(N_rays)] 
     intersected_faces = [[] for _ in range(N_rays)] 
+    r_tes = [[] for _ in range(N_rays)] 
+    tandels = [[] for _ in range(N_rays)] 
+    n_diel = [[] for _ in range(N_rays)]
     
-    # Pk = np.zeros([N_sections+1, N_rays, 3])
-    # Pk[0,:,:] = ray_origins
-    # nk = np.zeros([N_sections+1, N_rays, 3])
-    # nk[0,:,:] = np.tile(np.array([0,0,1]), (N_rays,1))
-    # ray_lengths = np.zeros([N_rays, N_sections])
-    # intersected_faces = np.zeros([N_rays, N_sections])
     next_surf = 1
     idx = 0
 
-    Pk, sk, nk, ray_lengths, idx_intersected_faces = ray(surfaces, sk, Pk, nk, ray_lengths,  intersected_faces, next_surf, idx)
-    # N_used_rays = np.shape(Pk)[1]
+    Pk, sk, nk, r_tes, tandels, n_diel, ray_lengths  = ray(surfaces, sk, Pk, nk, ray_lengths,  intersected_faces, next_surf, idx, r_tes, tandels, n_diel)
 
-    # Path length calculation
-    # path_length = np.zeros((N_used_rays,1), dtype=np.complex128) + (phi_a/I.k0).reshape(-1,1)
-    # for ii in range(N_sections):
-    #     path_length += ray_lengths[:,ii].reshape(-1,1) * np.sqrt(surfaces[ii+1].er1)
 
-    # Polarization calculation
-    # T_tot, e = polarization(Pk, sk, nk, e_arr)
-
-    # if I.plotDRT:
-        # plots.plot_rays(surfaces, Pk, N_sections, sk, N_used_rays, direction)
-
-    return Pk, idx_intersected_faces, ray_lengths, nk, sk
-
+    return Pk, nk, sk, r_tes, tandels, n_diel, ray_lengths
 #===========================================================================================================
 
 
-
+ #===========================================================================================================
 def barycentric_mean(points, faces_intersected, faces_areas, faces_nodes, surface_nodes, normals_nodes):
-    """
-    Interpolates normals at given points using barycentric coordinates
-    inside intersected triangle faces.
-
-    Parameters:
-    - points: (N, 3) array of intersected points
-    - faces_intersected: (N,) array of triangle indices corresponding to each point
-    - faces_areas: (F,) array of face areas
-    - faces_nodes: (F*4,) array in PyVista format → [3, i0, i1, i2, 3, i3, i4, i5, ...]
-    - surface_nodes: (M, 3) array of coordinates of all mesh nodes
-    - normals_nodes: (M, 3) array of normal vectors per node
-
-    Returns:
-    - (N, 3) array of interpolated normal vectors at each point
-    """
     # Reshape faces_nodes from PyVista format: (F*4,) → (F, 3)
     n_faces = len(faces_areas)
     faces = faces_nodes.reshape((n_faces, 4))[:, 1:]  # Drop the leading '3' in each face
@@ -238,24 +223,17 @@ def barycentric_mean(points, faces_intersected, faces_areas, faces_nodes, surfac
     interpolated_normals = np.zeros_like(points)
 
     for i, (point, face_idx) in enumerate(zip(points, faces_intersected)):
-        # Get node indices for the triangle
-        i0, i1, i2 = faces[face_idx]
-
-        # Get vertex positions
-        A = surface_nodes[i0]
+        i0, i1, i2 = faces[face_idx]                                # Get node indices for the triangle
+        A = surface_nodes[i0]                                       # Get vertex positions
         B = surface_nodes[i1]
         C = surface_nodes[i2]
-
-        # Get normals at each vertex
-        nA = normals_nodes[i0]
+        nA = normals_nodes[i0]                                      # Get normals at each vertex
         nB = normals_nodes[i1]
         nC = normals_nodes[i2]
 
-        # Compute vectors for barycentric coordinates
-        v0 = B - A
+        v0 = B - A                                                   # Compute vectors for barycentric coordinates
         v1 = C - A
         v2 = point - A
-
         d00 = np.dot(v0, v0)
         d01 = np.dot(v0, v1)
         d11 = np.dot(v1, v1)
@@ -263,88 +241,25 @@ def barycentric_mean(points, faces_intersected, faces_areas, faces_nodes, surfac
         d21 = np.dot(v2, v1)
 
         denom = d00 * d11 - d01 * d01
-        if np.abs(denom) < 1e-12:
-            # Degenerate triangle — fallback to vertex normal
-            interpolated_normals[i] = nA
+        if np.abs(denom) < 1e-12:    
+            interpolated_normals[i] = nA                            # Degenerate triangle — fallback to vertex normal
             continue
 
-        # Barycentric coordinates
-        v = (d11 * d20 - d01 * d21) / denom
+        v = (d11 * d20 - d01 * d21) / denom                         # Barycentric coordinates
         w = (d00 * d21 - d01 * d20) / denom
         u = 1.0 - v - w
 
-        # Interpolated normal
-        normal = u * nA + v * nB + w * nC
-
-        # Normalize
-        norm = np.linalg.norm(normal)
+        normal = u * nA + v * nB + w * nC                           # Interpolated normal
+        
+        norm = np.linalg.norm(normal)                               # Normalize
         if norm > 1e-12:
             normal /= norm
-
         interpolated_normals[i] = normal
-
     return interpolated_normals
-    """# Reformat faces_nodes if needed
-    if faces_nodes.ndim == 1:
-        faces_nodes = faces_nodes.reshape(-1, 4)[:, 1:]
-
-    interpolated_normals = []
-
-    for point, face_idx in zip(points, faces_intersected):
-        # Get the 3 node indices of the triangle
-        i0, i1, i2 = faces_nodes[face_idx]
-
-        # Get vertex coordinates
-        A = surface_nodes[i0]
-        B = surface_nodes[i1]
-        C = surface_nodes[i2]
-
-        tri_normal = np.cross(B - A, C - A)
-        area = np.linalg.norm(tri_normal) * 0.5
-        if area < 1e-12:
-            print(f"Triángulo degenerado en cara {face_idx}, vértices: {i0}, {i1}, {i2}")
-        # Get normals at each vertex
-        nA = normals_nodes[i0]
-        nB = normals_nodes[i1]
-        nC = normals_nodes[i2]
-
-        # Compute barycentric coordinates
-        v0 = B - A
-        v1 = C - A
-        v2 = point - A
-
-        d00 = np.dot(v0, v0)
-        d01 = np.dot(v0, v1)
-        d11 = np.dot(v1, v1)
-        d20 = np.dot(v2, v0)
-        d21 = np.dot(v2, v1)
-
-        denom = d00 * d11 - d01 * d01
-        if np.abs(denom) < 1e-12:
-            # Degenerate triangle — fallback to nA
-            interpolated_normals.append(nA)
-            continue
-
-        v = (d11 * d20 - d01 * d21) / denom
-        w = (d00 * d21 - d01 * d20) / denom
-        u = 1.0 - v - w
-
-        # Interpolate normal
-        normal = u * nA + v * nB + w * nC
-
-        # Normalize
-        norm = np.linalg.norm(normal)
-        if norm > 1e-12:
-            normal /= norm
-
-        interpolated_normals.append(normal)
-        import pyvista as pv
-   
-    return np.array(interpolated_normals)"""
-#===========================================================================================================
+ #===========================================================================================================
 
 
-
+ #===========================================================================================================
 def shootRays(Nx, Ny, Lx, Ly, typeSrc):
     n_theta = int(I.Ntheta)
     n_phi = int(I.Nphi)
@@ -365,13 +280,11 @@ def shootRays(Nx, Ny, Lx, Ly, typeSrc):
                 sk0[ij] = np.vstack((x, y, z)).T  # shape (n_rays, 3)
                 ij += 1
     return origins, sk0
+ #===========================================================================================================
     
 
+ #===========================================================================================================
 def fibonacci_sphere(n_rays, randomize=False):
-    """
-    Devuelve direcciones unitarias uniformemente distribuidas en la esfera
-    usando el método de Fibonacci.
-    """
     rnd = 1.
     if randomize:
         rnd = np.random.random() * n_rays
@@ -388,9 +301,8 @@ def fibonacci_sphere(n_rays, randomize=False):
         z = np.sin(phi) * r
         points.append([x, y, z])  # ya está normalizado
     return np.array(points)
+ #===========================================================================================================
 
-    # elif typeSrc == 'planew':
-    #     origins = 
 
 
 

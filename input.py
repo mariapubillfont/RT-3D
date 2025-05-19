@@ -23,7 +23,8 @@ class Ellipse:
 
 
 variables = {}
-with open('inputBox.txt', 'r') as file:
+with open('In_files/inputBox.txt', 'r') as file:
+# with open('In_files/inPlWv.txt', 'r') as file:
     for line in file:
         line = line.strip()
         if not line or ':' not in line:
@@ -43,7 +44,7 @@ with open('inputBox.txt', 'r') as file:
 
 D = variables['D']
 freq = variables['freq']
-typeSrc = variables['typeSrc']
+typeSrc = variables['typeSrc'][0]
 Lx = variables['Lx']
 Ly = variables['Ly']
 Nx = int(variables['Nx'])
@@ -57,13 +58,12 @@ meshMaxSize = variables['meshMaxSize']
 typeSurface = variables['typeSurface']
 er = variables['er']
 tand = variables['tand']
-Nrefl = int(variables['Nrefl'])
+maxRefl = int(variables['Nrefl'])
 saveExcels = variables['saveExcels']
 plotSurf = variables['plotSurf']
 plotDRT = variables['plotDRT']
 plotNormals = variables['plotNormals']
 plotTubes = variables['plotTubes']
-maxRefl = 3
 
 m_max = 10000000                                        #max slope possible
 e0 = 8.8541878128e-12                                   #vacuum permitivitty

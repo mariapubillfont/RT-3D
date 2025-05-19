@@ -1,12 +1,12 @@
 
 import input as I
-import Gmsh_examples as ex
-import input as I
 import numpy as np
 import pyvista as pv
 import mesh
 import plots
+import reflections as refl
 import rayTracing as rt
+
 
 
 ############### Input import ##################
@@ -42,18 +42,32 @@ Pk = []
 idx_intersected_faces = []
 nk = []
 sk = []
-path_length = []
+ray_lengths = []
 T_tot = []
 e = []
+r_tes = []
+tandels = []
+ndiel = []
+
+extra = 10e-3
+
+if I.typeSrc == 'pw':
+    sk0 = np.tile([0, 0, 1], (N_rays, 1))
+    x = np.linspace(-I.Lx/2 + extra, I.Lx/2 - extra, I.Nx)
+    y = np.linspace(-I.Ly/2 + extra, I.Ly/2 - extra, I.Ny) 
+    X, Y = np.meshgrid(x, y)
+    Z = np.zeros_like(X)
+    origins = np.stack((X.ravel(), Y.ravel(), Z.ravel()), axis=1)
+
+else:
+    sk0 = rt.fibonacci_sphere(N_rays)
+    origins = np.zeros([N_rays, 3])
 
 
-origins = np.zeros([N_rays, 3])
-sk0 = rt.fibonacci_sphere(N_rays)
+Pk, nk, sk, r_tes, tandels, ndiel, ray_lengths  = rt.DRT(origins, Nx, Ny, sk0, surfaces )
 
-Pk, idx_intersected_faces, path_length, nk, sk,  = rt.DRT(origins, Nx, Ny, sk0, surfaces )
-
-
-plots.plotDRT(surfaces, Pk, sk)
+if I.plotDRT: plots.plotDRT(surfaces, Pk, sk)
+p_abs = refl.getAbsorption(r_tes, tandels, ndiel, ray_lengths)
 # ray_length = 0.5  # longitud de los rayos
 
 # origin = np.array([0, 0, 0])
