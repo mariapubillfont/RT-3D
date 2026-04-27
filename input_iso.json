@@ -1,0 +1,35 @@
+{
+  "D": 0.25,
+  "freq": 25E9,
+  "typeSrc": "iso",
+  "theta": 0,
+  "phi": 0,
+  "Nx": 2500,
+  "Ny": 1,
+  "Lx": 1e-3,
+  "Ly": 1e-3,
+  "Ntheta": 181,
+  "rangeTheta": 180,
+  "Nphi": 361,
+  "rangePhi": 360,
+  "meshMaxSize": 0.01,
+  "Ampl_treshold": 1e-6,
+  "Nrefl": 6,
+  "saveExcels": 0,
+  "plotSurf": 0,
+  "plotDRT": 0,
+  "plotNormals": 0,
+  "plotTubes": 0,
+  "bckg_er": 1, 
+  "bckg_tand": 0, 
+  "geometry": [
+    {
+      "type": "box",
+      "center": [-90e-3, -90e-3, 60e-3],
+      "axis": [180e-3, 180e-3, 12e-3],
+      "er": 8.0, 
+      "tand": 0.1,
+      "color": "lightpink"
+    }
+  ]
+}
